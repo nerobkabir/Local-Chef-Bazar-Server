@@ -352,6 +352,103 @@ app.post("/payment-history", async (req, res) => {
   }
 });
 
+// GET reviews by user email
+app.get("/my-reviews", async (req, res) => {
+  try {
+    const email = req.query.email;
+
+    if (!email) {
+      return res.status(400).send({ success: false, message: "Email is required" });
+    }
+
+    const myReviews = await reviewsCollection
+      .find({ userEmail: email })   // FIXED (previously reviewerEmail)
+      .sort({ date: -1 })
+      .toArray();
+
+    res.send({ success: true, data: myReviews });
+
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+
+
+// Delete Review by ID
+const { ObjectId } = require("mongodb");
+
+app.delete("/reviews/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const result = await reviewsCollection.deleteOne({
+      _id: new ObjectId(id),
+    });
+
+    res.send({ success: true, message: "Review deleted successfully", result });
+
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+//  Update Review by ID
+app.put("/reviews/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const updatedData = req.body;
+
+    const result = await reviewsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updatedData }
+    );
+
+    res.send({ success: true, message: "Review updated successfully", result });
+
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+
+
+// Delete favorite by ID
+app.delete("/favorites/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const result = await favoritesCollection.deleteOne({ _id: new ObjectId(id) });
+
+    res.send({ success: true, message: "Meal removed from favorites successfully", result });
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+
+// GET favorites by user email
+app.get("/favorites", async (req, res) => {
+  try {
+    const email = req.query.email;
+
+    if (!email) {
+      return res.status(400).send({ success: false, message: "Email is required" });
+    }
+
+    const favorites = await favoritesCollection
+      .find({ userEmail: email })
+      .sort({ addedTime: -1 })
+      .toArray();
+
+    res.send({ success: true, data: favorites });
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+
+
+
 
 /* =======================================
    Start Server
