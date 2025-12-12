@@ -447,6 +447,70 @@ app.get("/favorites", async (req, res) => {
 });
 
 
+// GET meals created by a specific chef
+app.get("/my-meals", async (req, res) => {
+  try {
+    const email = req.query.email;
+
+    if (!email) {
+      return res.status(400).send({ success: false, message: "Email is required" });
+    }
+
+    const meals = await mealsCollection
+      .find({ userEmail: email })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send({ success: true, data: meals });
+
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+// DELETE Meal by ID
+
+app.delete("/meals/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const result = await mealsCollection.deleteOne({ _id: new ObjectId(id) });
+
+    res.send({
+      success: true,
+      message: "Meal deleted successfully",
+      result
+    });
+
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+// UPDATE Meal by ID
+
+app.put("/meals/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const updatedData = req.body;
+
+    const result = await mealsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updatedData }
+    );
+
+    res.send({
+      success: true,
+      message: "Meal updated successfully",
+      result,
+    });
+
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+
 
 
 
