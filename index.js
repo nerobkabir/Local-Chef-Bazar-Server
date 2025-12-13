@@ -85,7 +85,14 @@ app.post("/users", async (req, res) => {
       return res.send({ message: "User already exists" });
     }
 
-    await usersCollection.insertOne(user);
+    const newUser = {
+      ...user,
+      role: "user",        // ✅ default role
+      status: "active",    // ✅ default status
+      createdAt: new Date()
+    };
+
+    await usersCollection.insertOne(newUser);
 
     res.send({
       success: true,
@@ -96,6 +103,53 @@ app.post("/users", async (req, res) => {
     res.status(500).send({ success: false, error });
   }
 });
+
+
+// GET all users (Admin page
+app.get("/all-users", async (req, res) => {
+  try {
+    const users = await usersCollection.find().toArray();
+    res.send({ success: true, data: users });
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+
+// Make Fraud API (CORE FEATURE)
+app.put("/users/fraud/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const user = await usersCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!user) {
+      return res.status(404).send({ success: false, message: "User not found" });
+    }
+
+    if (user.role === "admin") {
+      return res.send({
+        success: false,
+        message: "Admin cannot be fraud",
+      });
+    }
+
+    const result = await usersCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: "fraud" } }
+    );
+
+    res.send({
+      success: true,
+      message: "User marked as fraud successfully",
+      result,
+    });
+
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
 
 /* =======================================
    Meals Routes
@@ -115,6 +169,16 @@ app.get("/meals", async (req, res) => {
 app.post("/create-meal", async (req, res) => {
   try {
     const meal = req.body;
+
+    const chef = await usersCollection.findOne({ email: meal.userEmail });
+
+    if (chef?.status === "fraud") {
+      return res.status(403).send({
+        success: false,
+        message: "Fraud chefs cannot create meals",
+      });
+    }
+
 
     if (!meal.userEmail) {
       return res.status(400).send({
@@ -233,6 +297,16 @@ app.post("/favorites", async (req, res) => {
 app.post("/orders", async (req, res) => {
   try {
     const order = req.body;
+
+    const user = await usersCollection.findOne({ email: order.userEmail });
+
+    if (user?.status === "fraud") {
+      return res.status(403).send({
+        success: false,
+        message: "Fraud users cannot place orders",
+      });
+    }
+
 
     const requiredFields = [
       "foodId",
@@ -511,6 +585,62 @@ app.put("/meals/:id", async (req, res) => {
 });
 
 
+// UPDATE order status: pending -> accepted/cancelled/delivered
+app.put("/orders/status/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { status } = req.body;
+
+    if (!status) {
+      return res.status(400).send({ success: false, message: "Status is required" });
+    }
+
+    const updateDoc = {
+      $set: { orderStatus: status }
+    };
+
+    if (status === "delivered") {
+      updateDoc.$set.deliveryTime = new Date();
+    }
+
+    const result = await ordersCollection.updateOne(
+      { _id: new ObjectId(id) },
+      updateDoc
+    );
+
+    res.send({
+      success: true,
+      message: `Order ${status} successfully`,
+      result,
+    });
+
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+
+
+// GET orders by chefId (chef request page)
+app.get("/chef-orders", async (req, res) => {
+  try {
+    const chefId = req.query.chefId;
+
+    if (!chefId) {
+      return res.status(400).send({ success: false, message: "chefId is required" });
+    }
+
+    const orders = await ordersCollection
+      .find({ chefId })
+      .sort({ orderTime: -1 })
+      .toArray();
+
+    res.send({ success: true, data: orders });
+
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
 
 
 
