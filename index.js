@@ -75,6 +75,8 @@ app.get("/users", async (req, res) => {
   }
 });
 
+
+
 // POST create new user
 app.post("/users", async (req, res) => {
   try {
@@ -155,15 +157,51 @@ app.put("/users/fraud/:id", async (req, res) => {
    Meals Routes
 ======================================= */
 
-// GET all meals
 app.get("/meals", async (req, res) => {
   try {
-    const meals = await mealsCollection.find().toArray();
-    res.send(meals);
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+
+    const skip = (page - 1) * limit;
+
+    const meals = await mealsCollection
+      .find()
+      .skip(skip)
+      .limit(limit)
+      .toArray();
+
+    const totalMeals = await mealsCollection.countDocuments();
+
+    res.send({
+      success: true,
+      data: meals,
+      totalMeals,
+      currentPage: page,
+      totalPages: Math.ceil(totalMeals / limit),
+    });
+
   } catch (error) {
     res.status(500).send({ success: false, error });
   }
 });
+
+// GET single meal by ID
+app.get("/meals/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const meal = await mealsCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!meal) {
+      return res.status(404).send({ success: false, message: "Meal not found" });
+    }
+
+    res.send({ success: true, data: meal });
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+
 
 // POST create new meal
 app.post("/create-meal", async (req, res) => {
@@ -641,6 +679,132 @@ app.get("/chef-orders", async (req, res) => {
     res.status(500).send({ success: false, error });
   }
 });
+
+// GET all role requests
+app.get("/role-requests", async (req, res) => {
+  try {
+    const requests = await roleRequestCollection
+      .find()
+      .sort({ requestTime: -1 })
+      .toArray();
+
+    res.send({ success: true, data: requests });
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+
+// APPROVE role request
+app.put("/role-requests/approve/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const request = await roleRequestCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!request) {
+      return res.status(404).send({ success: false, message: "Request not found" });
+    }
+
+    // Generate chefId if chef
+    let updateUserDoc = {};
+    if (request.requestType === "chef") {
+      const chefId = "chef-" + Math.floor(1000 + Math.random() * 9000);
+      updateUserDoc = { role: "chef", chefId };
+    }
+
+    if (request.requestType === "admin") {
+      updateUserDoc = { role: "admin" };
+    }
+
+    // Update user role
+    await usersCollection.updateOne(
+      { email: request.userEmail },
+      { $set: updateUserDoc }
+    );
+
+    // Update request status
+    await roleRequestCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { requestStatus: "approved" } }
+    );
+
+    res.send({
+      success: true,
+      message: "Request approved successfully",
+    });
+
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+
+// REJECT role request
+app.put("/role-requests/reject/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    await roleRequestCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { requestStatus: "rejected" } }
+    );
+
+    res.send({
+      success: true,
+      message: "Request rejected successfully",
+    });
+
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+// ===============================
+// GET Platform Statistics (Admin)
+// ===============================
+app.get("/admin-stats", async (req, res) => {
+  try {
+    const totalUsers = await usersCollection.countDocuments();
+
+    const pendingOrders = await ordersCollection.countDocuments({
+      orderStatus: "pending",
+    });
+
+    const deliveredOrders = await ordersCollection.countDocuments({
+      orderStatus: "delivered",
+    });
+
+    const payments = await client
+      .db("LocalChefBazaarDB")
+      .collection("payment_history")
+      .aggregate([
+        {
+          $group: {
+            _id: null,
+            totalAmount: { $sum: "$amount" },       
+          },
+        },
+      ])
+      .toArray();
+
+    const totalPaymentAmount = payments[0]?.totalAmount || 0;
+
+    res.send({
+      success: true,
+      data: {
+        totalUsers,
+        pendingOrders,
+        deliveredOrders,
+        totalPaymentAmount,
+      },
+    });
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+
 
 
 
