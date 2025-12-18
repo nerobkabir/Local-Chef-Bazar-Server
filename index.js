@@ -1,15 +1,81 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const { MongoClient } = require("mongodb");
+const { MongoClient, ObjectId } = require("mongodb");
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 /* =======================================
+   Stripe Configuration
+======================================= */
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET; // Add this to .env
+
+/* =======================================
    Middleware
 ======================================= */
 app.use(cors());
+
+// ⚠️ IMPORTANT: Raw body parser BEFORE express.json() for Stripe webhook
+app.post(
+  "/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const sig = req.headers["stripe-signature"];
+
+    let event;
+
+    try {
+      event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    } catch (err) {
+      console.error("⚠️ Webhook signature verification failed:", err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    // Handle the checkout.session.completed event
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+
+      const orderId = session.metadata.orderId;
+      const userEmail = session.metadata.userEmail;
+      const amountTotal = session.amount_total / 100; // Convert from cents
+
+      console.log("✅ Payment successful for order:", orderId);
+
+      try {
+        // Update order payment status
+        await ordersCollection.updateOne(
+          { _id: new ObjectId(orderId) },
+          { $set: { paymentStatus: "paid" } }
+        );
+
+        // Save payment history
+        await client
+          .db("LocalChefBazaarDB")
+          .collection("payment_history")
+          .insertOne({
+            orderId: orderId,
+            amount: amountTotal,
+            currency: session.currency,
+            paymentMethod: "card",
+            userEmail: userEmail,
+            paymentTime: new Date(),
+            stripeSessionId: session.id,
+            stripePaymentIntentId: session.payment_intent,
+          });
+
+        console.log("✅ Payment history saved successfully");
+      } catch (error) {
+        console.error("❌ Error updating payment status:", error);
+      }
+    }
+
+    res.json({ received: true });
+  }
+);
+
+// Regular JSON parser for other routes
 app.use(express.json());
 
 /* =======================================
@@ -38,7 +104,6 @@ async function connectDB() {
     favoritesCollection = db.collection("favorites");
     ordersCollection = db.collection("order_collection");
     roleRequestCollection = db.collection("role_requests");
-
   } catch (error) {
     console.error("❌ MongoDB Connection Error:", error);
   }
@@ -69,13 +134,10 @@ app.get("/users", async (req, res) => {
 
     const users = await usersCollection.find().toArray();
     res.send(users);
-
   } catch (error) {
     res.status(500).send({ success: false, error });
   }
 });
-
-
 
 // POST create new user
 app.post("/users", async (req, res) => {
@@ -89,9 +151,9 @@ app.post("/users", async (req, res) => {
 
     const newUser = {
       ...user,
-      role: "user",        // ✅ default role
-      status: "active",    // ✅ default status
-      createdAt: new Date()
+      role: "user",
+      status: "active",
+      createdAt: new Date(),
     };
 
     await usersCollection.insertOne(newUser);
@@ -100,14 +162,12 @@ app.post("/users", async (req, res) => {
       success: true,
       message: "User saved successfully",
     });
-
   } catch (error) {
     res.status(500).send({ success: false, error });
   }
 });
 
-
-// GET all users (Admin page
+// GET all users (Admin page)
 app.get("/all-users", async (req, res) => {
   try {
     const users = await usersCollection.find().toArray();
@@ -117,8 +177,7 @@ app.get("/all-users", async (req, res) => {
   }
 });
 
-
-// Make Fraud API (CORE FEATURE)
+// Make Fraud API
 app.put("/users/fraud/:id", async (req, res) => {
   try {
     const id = req.params.id;
@@ -126,7 +185,9 @@ app.put("/users/fraud/:id", async (req, res) => {
     const user = await usersCollection.findOne({ _id: new ObjectId(id) });
 
     if (!user) {
-      return res.status(404).send({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .send({ success: false, message: "User not found" });
     }
 
     if (user.role === "admin") {
@@ -146,12 +207,10 @@ app.put("/users/fraud/:id", async (req, res) => {
       message: "User marked as fraud successfully",
       result,
     });
-
   } catch (error) {
     res.status(500).send({ success: false, error });
   }
 });
-
 
 /* =======================================
    Meals Routes
@@ -161,14 +220,9 @@ app.get("/meals", async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
-
     const skip = (page - 1) * limit;
 
-    const meals = await mealsCollection
-      .find()
-      .skip(skip)
-      .limit(limit)
-      .toArray();
+    const meals = await mealsCollection.find().skip(skip).limit(limit).toArray();
 
     const totalMeals = await mealsCollection.countDocuments();
 
@@ -179,7 +233,6 @@ app.get("/meals", async (req, res) => {
       currentPage: page,
       totalPages: Math.ceil(totalMeals / limit),
     });
-
   } catch (error) {
     res.status(500).send({ success: false, error });
   }
@@ -192,7 +245,9 @@ app.get("/meals/:id", async (req, res) => {
     const meal = await mealsCollection.findOne({ _id: new ObjectId(id) });
 
     if (!meal) {
-      return res.status(404).send({ success: false, message: "Meal not found" });
+      return res
+        .status(404)
+        .send({ success: false, message: "Meal not found" });
     }
 
     res.send({ success: true, data: meal });
@@ -201,37 +256,30 @@ app.get("/meals/:id", async (req, res) => {
   }
 });
 
-
-
 // POST create new meal
 app.post("/create-meal", async (req, res) => {
   try {
     const meal = req.body;
 
-    const chef = await usersCollection.findOne({ email: meal.userEmail });
+    const chef = await usersCollection.findOne({
+      email: meal.userEmail,
+    });
 
-    if (chef?.status === "fraud") {
+    if (!chef || chef.role !== "chef") {
+      return res.status(403).send({
+        success: false,
+        message: "Only chefs can create meals",
+      });
+    }
+
+    if (chef.status === "fraud") {
       return res.status(403).send({
         success: false,
         message: "Fraud chefs cannot create meals",
       });
     }
 
-
-    if (!meal.userEmail) {
-      return res.status(400).send({
-        success: false,
-        message: "User email is required",
-      });
-    }
-
-    if (!meal.chefId) {
-      return res.status(400).send({
-        success: false,
-        message: "Chef ID is required",
-      });
-    }
-
+    meal.chefId = chef.chefId;
     meal.createdAt = new Date();
     meal.rating = 0;
 
@@ -242,7 +290,65 @@ app.post("/create-meal", async (req, res) => {
       message: "Meal created successfully",
       data: result,
     });
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
 
+// GET meals created by a specific chef
+app.get("/my-meals", async (req, res) => {
+  try {
+    const email = req.query.email;
+
+    if (!email) {
+      return res
+        .status(400)
+        .send({ success: false, message: "Email is required" });
+    }
+
+    const meals = await mealsCollection
+      .find({ userEmail: email })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send({ success: true, data: meals });
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+// DELETE Meal by ID
+app.delete("/meals/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const result = await mealsCollection.deleteOne({ _id: new ObjectId(id) });
+
+    res.send({
+      success: true,
+      message: "Meal deleted successfully",
+      result,
+    });
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+// UPDATE Meal by ID
+app.put("/meals/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const updatedData = req.body;
+
+    const result = await mealsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updatedData }
+    );
+
+    res.send({
+      success: true,
+      message: "Meal updated successfully",
+      result,
+    });
   } catch (error) {
     res.status(500).send({ success: false, error });
   }
@@ -266,10 +372,30 @@ app.get("/reviews", async (req, res) => {
 app.get("/reviews/:mealId", async (req, res) => {
   try {
     const { mealId } = req.params;
-
     const reviews = await reviewsCollection.find({ foodId: mealId }).toArray();
     res.send(reviews);
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
 
+// GET reviews by user email
+app.get("/my-reviews", async (req, res) => {
+  try {
+    const email = req.query.email;
+
+    if (!email) {
+      return res
+        .status(400)
+        .send({ success: false, message: "Email is required" });
+    }
+
+    const myReviews = await reviewsCollection
+      .find({ userEmail: email })
+      .sort({ date: -1 })
+      .toArray();
+
+    res.send({ success: true, data: myReviews });
   } catch (error) {
     res.status(500).send({ success: false, error });
   }
@@ -287,7 +413,38 @@ app.post("/reviews", async (req, res) => {
       success: true,
       message: "Review submitted successfully",
     });
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
 
+// DELETE Review by ID
+app.delete("/reviews/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const result = await reviewsCollection.deleteOne({
+      _id: new ObjectId(id),
+    });
+
+    res.send({ success: true, message: "Review deleted successfully", result });
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+// UPDATE Review by ID
+app.put("/reviews/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const updatedData = req.body;
+
+    const result = await reviewsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updatedData }
+    );
+
+    res.send({ success: true, message: "Review updated successfully", result });
   } catch (error) {
     res.status(500).send({ success: false, error });
   }
@@ -321,7 +478,46 @@ app.post("/favorites", async (req, res) => {
       success: true,
       message: "Added to favorites successfully",
     });
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
 
+// GET favorites by user email
+app.get("/favorites", async (req, res) => {
+  try {
+    const email = req.query.email;
+
+    if (!email) {
+      return res
+        .status(400)
+        .send({ success: false, message: "Email is required" });
+    }
+
+    const favorites = await favoritesCollection
+      .find({ userEmail: email })
+      .sort({ addedTime: -1 })
+      .toArray();
+
+    res.send({ success: true, data: favorites });
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+// DELETE favorite by ID
+app.delete("/favorites/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const result = await favoritesCollection.deleteOne({
+      _id: new ObjectId(id),
+    });
+
+    res.send({
+      success: true,
+      message: "Meal removed from favorites successfully",
+      result,
+    });
   } catch (error) {
     res.status(500).send({ success: false, error });
   }
@@ -344,7 +540,6 @@ app.post("/orders", async (req, res) => {
         message: "Fraud users cannot place orders",
       });
     }
-
 
     const requiredFields = [
       "foodId",
@@ -374,17 +569,261 @@ app.post("/orders", async (req, res) => {
       message: "Order placed successfully",
       data: result,
     });
-
   } catch (error) {
     res.status(500).send({ success: false, error });
   }
 });
 
+// GET: Orders by user email
+app.get("/orders", async (req, res) => {
+  try {
+    const email = req.query.email;
+
+    if (!email) {
+      return res
+        .status(400)
+        .send({ success: false, message: "Email is required" });
+    }
+
+    const orders = await ordersCollection
+      .find({ userEmail: email })
+      .sort({ orderTime: -1 })
+      .toArray();
+
+    res.send({ success: true, data: orders });
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+// GET orders by chef email
+app.get("/chef-orders", async (req, res) => {
+  try {
+    const email = req.query.email;
+
+    if (!email) {
+      return res.status(400).send({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    console.log("🔍 Fetching orders for chef email:", email);
+
+    const chefMeals = await mealsCollection.find({ userEmail: email }).toArray();
+
+    console.log("✅ Chef Meals Found:", chefMeals.length);
+
+    if (chefMeals.length === 0) {
+      return res.send({
+        success: true,
+        data: [],
+        message: "No meals found for this chef",
+      });
+    }
+
+    const mealIds = chefMeals.map((m) => m._id.toString());
+    console.log("📋 Meal IDs:", mealIds);
+
+    const orders = await ordersCollection
+      .find({ foodId: { $in: mealIds } })
+      .sort({ orderTime: -1 })
+      .toArray();
+
+    console.log("✅ Orders Found:", orders.length);
+
+    res.send({
+      success: true,
+      data: orders,
+    });
+  } catch (error) {
+    console.error("❌ Error fetching chef orders:", error);
+    res.status(500).send({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// UPDATE order status
+app.put("/orders/status/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { status } = req.body;
+
+    if (!status) {
+      return res
+        .status(400)
+        .send({ success: false, message: "Status is required" });
+    }
+
+    const updateDoc = {
+      $set: { orderStatus: status },
+    };
+
+    if (status === "delivered") {
+      updateDoc.$set.deliveryTime = new Date();
+    }
+
+    const result = await ordersCollection.updateOne(
+      { _id: new ObjectId(id) },
+      updateDoc
+    );
+
+    res.send({
+      success: true,
+      message: `Order ${status} successfully`,
+      result,
+    });
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+// UPDATE payment status (payment success page থেকে call হবে)
+app.put("/orders/payment/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { paymentStatus } = req.body;
+
+    console.log(`🔄 Updating payment status for order: ${id}`);
+
+    // Order টি আছে কিনা check করুন
+    const order = await ordersCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!order) {
+      return res.status(404).send({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    // Payment status update করুন
+    const result = await ordersCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { 
+        $set: { 
+          paymentStatus: paymentStatus || "paid",
+          paymentTime: new Date()
+        } 
+      }
+    );
+
+    // Payment history save করুন
+    await client
+      .db("LocalChefBazaarDB")
+      .collection("payment_history")
+      .insertOne({
+        orderId: id,
+        amount: order.price * order.quantity,
+        currency: "bdt",
+        paymentMethod: "card",
+        userEmail: order.userEmail,
+        paymentTime: new Date(),
+        orderStatus: order.orderStatus,
+      });
+
+    console.log(`✅ Payment status updated successfully for order: ${id}`);
+
+    res.send({
+      success: true,
+      message: "Payment status updated successfully",
+      result,
+    });
+  } catch (error) {
+    console.error("❌ Error updating payment status:", error);
+    res.status(500).send({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
 /* =======================================
-   Role Upgrade Request Routes
+   Payment Routes (Stripe)
 ======================================= */
 
-// POST role request (chef/admin)
+// CREATE CHECKOUT SESSION
+app.post("/create-checkout-session", async (req, res) => {
+  try {
+    const { orderId } = req.body;
+
+    if (!orderId) {
+      return res.status(400).send({
+        success: false,
+        message: "Order ID is required",
+      });
+    }
+
+    const order = await ordersCollection.findOne({
+      _id: new ObjectId(orderId),
+    });
+
+    if (!order) {
+      return res.status(404).send({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    if (order.orderStatus !== "accepted") {
+      return res.status(400).send({
+        success: false,
+        message: "Order must be accepted before payment",
+      });
+    }
+
+    if (order.paymentStatus === "paid") {
+      return res.status(400).send({
+        success: false,
+        message: "Order is already paid",
+      });
+    }
+
+    const totalAmount = order.price * order.quantity;
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "bdt",
+            product_data: {
+              name: order.mealName,
+              description: `Order from ${order.chefName || "Chef"}`,
+            },
+            unit_amount: Math.round(totalAmount * 100),
+          },
+          quantity: 1,
+        },
+      ],
+      mode: "payment",
+      success_url: `${process.env.CLIENT_URL}/dashboard/payment-success?orderId=${orderId}`,
+      cancel_url: `${process.env.CLIENT_URL}/dashboard/payment-cancel`,
+      metadata: {
+        orderId: orderId,
+        userEmail: order.userEmail,
+      },
+    });
+
+    res.send({
+      success: true,
+      url: session.url,
+    });
+  } catch (error) {
+    console.error("❌ Stripe Error:", error);
+    res.status(500).send({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+/* =======================================
+   Role Request Routes
+======================================= */
+
+// POST role request
 app.post("/role-request", async (req, res) => {
   try {
     const request = req.body;
@@ -406,275 +845,6 @@ app.post("/role-request", async (req, res) => {
       message: "Role request submitted successfully",
       data: result,
     });
-
-  } catch (error) {
-    res.status(500).send({ success: false, error });
-  }
-});
-
-
-// ===============================
-// GET: Orders by user email
-// ===============================
-app.get("/orders", async (req, res) => {
-  try {
-    const email = req.query.email;
-
-    if (!email) {
-      return res.status(400).send({ success: false, message: "Email is required" });
-    }
-
-    const orders = await ordersCollection
-      .find({ userEmail: email })
-      .sort({ orderTime: -1 })
-      .toArray();
-
-    res.send({ success: true, data: orders });
-
-  } catch (error) {
-    res.status(500).send({ success: false, error });
-  }
-});
-
-
-// ===============================
-// POST: Save payment history
-// ===============================
-app.post("/payment-history", async (req, res) => {
-  try {
-    const payment = req.body;
-
-    payment.paymentTime = new Date();
-
-    const result = await client
-      .db("LocalChefBazaarDB")
-      .collection("payment_history")
-      .insertOne(payment);
-
-    // update order paymentStatus
-    await ordersCollection.updateOne(
-      { _id: new ObjectId(payment.orderId) },
-      { $set: { paymentStatus: "paid" } }
-    );
-
-    res.send({ success: true, message: "Payment Saved", data: result });
-
-  } catch (error) {
-    res.status(500).send({ success: false, error });
-  }
-});
-
-// GET reviews by user email
-app.get("/my-reviews", async (req, res) => {
-  try {
-    const email = req.query.email;
-
-    if (!email) {
-      return res.status(400).send({ success: false, message: "Email is required" });
-    }
-
-    const myReviews = await reviewsCollection
-      .find({ userEmail: email })   // FIXED (previously reviewerEmail)
-      .sort({ date: -1 })
-      .toArray();
-
-    res.send({ success: true, data: myReviews });
-
-  } catch (error) {
-    res.status(500).send({ success: false, error });
-  }
-});
-
-
-
-// Delete Review by ID
-const { ObjectId } = require("mongodb");
-
-app.delete("/reviews/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-
-    const result = await reviewsCollection.deleteOne({
-      _id: new ObjectId(id),
-    });
-
-    res.send({ success: true, message: "Review deleted successfully", result });
-
-  } catch (error) {
-    res.status(500).send({ success: false, error });
-  }
-});
-
-//  Update Review by ID
-app.put("/reviews/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const updatedData = req.body;
-
-    const result = await reviewsCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updatedData }
-    );
-
-    res.send({ success: true, message: "Review updated successfully", result });
-
-  } catch (error) {
-    res.status(500).send({ success: false, error });
-  }
-});
-
-
-
-// Delete favorite by ID
-app.delete("/favorites/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const result = await favoritesCollection.deleteOne({ _id: new ObjectId(id) });
-
-    res.send({ success: true, message: "Meal removed from favorites successfully", result });
-  } catch (error) {
-    res.status(500).send({ success: false, error });
-  }
-});
-
-
-// GET favorites by user email
-app.get("/favorites", async (req, res) => {
-  try {
-    const email = req.query.email;
-
-    if (!email) {
-      return res.status(400).send({ success: false, message: "Email is required" });
-    }
-
-    const favorites = await favoritesCollection
-      .find({ userEmail: email })
-      .sort({ addedTime: -1 })
-      .toArray();
-
-    res.send({ success: true, data: favorites });
-  } catch (error) {
-    res.status(500).send({ success: false, error });
-  }
-});
-
-
-// GET meals created by a specific chef
-app.get("/my-meals", async (req, res) => {
-  try {
-    const email = req.query.email;
-
-    if (!email) {
-      return res.status(400).send({ success: false, message: "Email is required" });
-    }
-
-    const meals = await mealsCollection
-      .find({ userEmail: email })
-      .sort({ createdAt: -1 })
-      .toArray();
-
-    res.send({ success: true, data: meals });
-
-  } catch (error) {
-    res.status(500).send({ success: false, error });
-  }
-});
-
-// DELETE Meal by ID
-
-app.delete("/meals/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-
-    const result = await mealsCollection.deleteOne({ _id: new ObjectId(id) });
-
-    res.send({
-      success: true,
-      message: "Meal deleted successfully",
-      result
-    });
-
-  } catch (error) {
-    res.status(500).send({ success: false, error });
-  }
-});
-
-// UPDATE Meal by ID
-
-app.put("/meals/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const updatedData = req.body;
-
-    const result = await mealsCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updatedData }
-    );
-
-    res.send({
-      success: true,
-      message: "Meal updated successfully",
-      result,
-    });
-
-  } catch (error) {
-    res.status(500).send({ success: false, error });
-  }
-});
-
-
-// UPDATE order status: pending -> accepted/cancelled/delivered
-app.put("/orders/status/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { status } = req.body;
-
-    if (!status) {
-      return res.status(400).send({ success: false, message: "Status is required" });
-    }
-
-    const updateDoc = {
-      $set: { orderStatus: status }
-    };
-
-    if (status === "delivered") {
-      updateDoc.$set.deliveryTime = new Date();
-    }
-
-    const result = await ordersCollection.updateOne(
-      { _id: new ObjectId(id) },
-      updateDoc
-    );
-
-    res.send({
-      success: true,
-      message: `Order ${status} successfully`,
-      result,
-    });
-
-  } catch (error) {
-    res.status(500).send({ success: false, error });
-  }
-});
-
-
-
-// GET orders by chefId (chef request page)
-app.get("/chef-orders", async (req, res) => {
-  try {
-    const chefId = req.query.chefId;
-
-    if (!chefId) {
-      return res.status(400).send({ success: false, message: "chefId is required" });
-    }
-
-    const orders = await ordersCollection
-      .find({ chefId })
-      .sort({ orderTime: -1 })
-      .toArray();
-
-    res.send({ success: true, data: orders });
-
   } catch (error) {
     res.status(500).send({ success: false, error });
   }
@@ -694,19 +864,21 @@ app.get("/role-requests", async (req, res) => {
   }
 });
 
-
 // APPROVE role request
 app.put("/role-requests/approve/:id", async (req, res) => {
   try {
     const id = req.params.id;
 
-    const request = await roleRequestCollection.findOne({ _id: new ObjectId(id) });
+    const request = await roleRequestCollection.findOne({
+      _id: new ObjectId(id),
+    });
 
     if (!request) {
-      return res.status(404).send({ success: false, message: "Request not found" });
+      return res
+        .status(404)
+        .send({ success: false, message: "Request not found" });
     }
 
-    // Generate chefId if chef
     let updateUserDoc = {};
     if (request.requestType === "chef") {
       const chefId = "chef-" + Math.floor(1000 + Math.random() * 9000);
@@ -717,13 +889,11 @@ app.put("/role-requests/approve/:id", async (req, res) => {
       updateUserDoc = { role: "admin" };
     }
 
-    // Update user role
     await usersCollection.updateOne(
       { email: request.userEmail },
       { $set: updateUserDoc }
     );
 
-    // Update request status
     await roleRequestCollection.updateOne(
       { _id: new ObjectId(id) },
       { $set: { requestStatus: "approved" } }
@@ -733,12 +903,10 @@ app.put("/role-requests/approve/:id", async (req, res) => {
       success: true,
       message: "Request approved successfully",
     });
-
   } catch (error) {
     res.status(500).send({ success: false, error });
   }
 });
-
 
 // REJECT role request
 app.put("/role-requests/reject/:id", async (req, res) => {
@@ -754,15 +922,15 @@ app.put("/role-requests/reject/:id", async (req, res) => {
       success: true,
       message: "Request rejected successfully",
     });
-
   } catch (error) {
     res.status(500).send({ success: false, error });
   }
 });
 
-// ===============================
-// GET Platform Statistics (Admin)
-// ===============================
+/* =======================================
+   Admin Statistics
+======================================= */
+
 app.get("/admin-stats", async (req, res) => {
   try {
     const totalUsers = await usersCollection.countDocuments();
@@ -782,7 +950,7 @@ app.get("/admin-stats", async (req, res) => {
         {
           $group: {
             _id: null,
-            totalAmount: { $sum: "$amount" },       
+            totalAmount: { $sum: "$amount" },
           },
         },
       ])
@@ -803,10 +971,6 @@ app.get("/admin-stats", async (req, res) => {
     res.status(500).send({ success: false, error });
   }
 });
-
-
-
-
 
 /* =======================================
    Start Server
