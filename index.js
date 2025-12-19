@@ -6,6 +6,30 @@ const { MongoClient, ObjectId } = require("mongodb");
 const app = express();
 const port = process.env.PORT || 3000;
 
+
+var admin = require("firebase-admin");
+
+
+var admin = require("firebase-admin");
+
+try {
+  if (!admin.apps.length) {
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+    
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: privateKey,
+      })
+    });
+    console.log("✅ Firebase Admin SDK initialized successfully");
+  }
+} catch (error) {
+  console.error("❌ Firebase Admin initialization error:", error.message);
+}
+
+
 /* =======================================
    Stripe Configuration
 ======================================= */
