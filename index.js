@@ -6,14 +6,11 @@ const { MongoClient, ObjectId } = require("mongodb");
 const app = express();
 const port = process.env.PORT || 3000;
 
-
+// Firebase Admin SDK
 var admin = require("firebase-admin");
 
-
-var admin = require("firebase-admin");
-
-try {
-  if (!admin.apps.length) {
+if (!admin.apps.length) {
+  try {
     const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
     
     admin.initializeApp({
@@ -24,17 +21,18 @@ try {
       })
     });
     console.log("✅ Firebase Admin SDK initialized successfully");
+  } catch (error) {
+    console.error("❌ Firebase Admin initialization error:", error.message);
   }
-} catch (error) {
-  console.error("❌ Firebase Admin initialization error:", error.message);
 }
-
 
 /* =======================================
    Stripe Configuration
 ======================================= */
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET; // Add this to .env
+const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+// ... বাকি code আগের মতোই
 
 /* =======================================
    Middleware
@@ -280,7 +278,37 @@ app.get("/meals/:id", async (req, res) => {
   }
 });
 
-// POST create new meal
+
+// ✅ এটা শুধু একবার run করবেন data fix করার জন্য
+app.get("/fix-ingredients", async (req, res) => {
+  try {
+    const meals = await mealsCollection.find({}).toArray();
+    
+    let updated = 0;
+    for (const meal of meals) {
+      if (meal.ingredients && !Array.isArray(meal.ingredients)) {
+        const ingredientsArray = typeof meal.ingredients === 'string' 
+          ? meal.ingredients.split(',').map(i => i.trim())
+          : [];
+          
+        await mealsCollection.updateOne(
+          { _id: meal._id },
+          { $set: { ingredients: ingredientsArray } }
+        );
+        updated++;
+      }
+    }
+    
+    res.send({
+      success: true,
+      message: `${updated} meals updated successfully`
+    });
+  } catch (error) {
+    res.status(500).send({ success: false, error });
+  }
+});
+
+// POST create new meal - এই route এ
 app.post("/create-meal", async (req, res) => {
   try {
     const meal = req.body;
@@ -306,6 +334,13 @@ app.post("/create-meal", async (req, res) => {
     meal.chefId = chef.chefId;
     meal.createdAt = new Date();
     meal.rating = 0;
+    
+    // ✅ এই লাইন add করুন
+    if (!Array.isArray(meal.ingredients)) {
+      meal.ingredients = meal.ingredients 
+        ? meal.ingredients.split(',').map(i => i.trim()) 
+        : [];
+    }
 
     const result = await mealsCollection.insertOne(meal);
 
@@ -612,7 +647,7 @@ app.get("/orders", async (req, res) => {
     const orders = await ordersCollection
       .find({ userEmail: email })
       .sort({ orderTime: -1 })
-      .toArray();git
+      .toArray();
 
     res.send({ success: true, data: orders });
   } catch (error) {
