@@ -231,9 +231,7 @@ app.put("/users/fraud/:id", async (req, res) => {
   }
 });
 
-/* =======================================
-   Meals Routes
-======================================= */
+// Meals Routes
 
 app.get("/meals", async (req, res) => {
   try {
@@ -390,9 +388,7 @@ app.put("/meals/:id", async (req, res) => {
   }
 });
 
-/* =======================================
-   Reviews Routes
-======================================= */
+// Reviews Routes
 
 app.get("/reviews", async (req, res) => {
   try {
@@ -497,10 +493,7 @@ app.put("/reviews/:id", async (req, res) => {
   }
 });
 
-/* =======================================
-   Favorites Routes
-======================================= */
-
+// Favorites Routes
 app.post("/favorites", async (req, res) => {
   try {
     await connectDB();
@@ -573,9 +566,7 @@ app.delete("/favorites/:id", async (req, res) => {
   }
 });
 
-/* =======================================
-   Orders Routes
-======================================= */
+// Orders Routes
 
 app.post("/orders", async (req, res) => {
   try {
@@ -788,9 +779,7 @@ app.put("/orders/payment/:id", async (req, res) => {
   }
 });
 
-/* =======================================
-   Payment Routes (Stripe)
-======================================= */
+// Payment Routes (Stripe)
 
 app.post("/create-checkout-session", async (req, res) => {
   try {
@@ -869,9 +858,7 @@ app.post("/create-checkout-session", async (req, res) => {
   }
 });
 
-/* =======================================
-   Role Request Routes
-======================================= */
+// Role Request Routes
 
 app.post("/role-request", async (req, res) => {
   try {
@@ -981,9 +968,7 @@ app.put("/role-requests/reject/:id", async (req, res) => {
   }
 });
 
-/* =======================================
-   Admin Statistics
-======================================= */
+// Admin Stats Route
 
 app.get("/admin-stats", async (req, res) => {
   try {
@@ -1027,9 +1012,7 @@ app.get("/admin-stats", async (req, res) => {
   }
 });
 
-/* =======================================
-   Start Server
-======================================= */
+// Start Server
 app.listen(port, () => {
   console.log(`🚀 Server running on http://localhost:${port}`);
 });
