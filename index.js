@@ -26,18 +26,14 @@ if (!admin.apps.length) {
   }
 }
 
-/* =======================================
-   Stripe Configuration
-======================================= */
+
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
-/* =======================================
-   Middleware
-======================================= */
+// Middleware
 app.use(cors());
 
-// ⚠️ IMPORTANT: Raw body parser BEFORE express.json() for Stripe webhook
+
 app.post(
   "/webhook",
   express.raw({ type: "application/json" }),
@@ -93,9 +89,9 @@ app.post(
 
 app.use(express.json());
 
-/* =======================================
-   MongoDB Connection
-======================================= */
+
+// MongoDB Connection
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.f8ar27k.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 const client = new MongoClient(uri, {
@@ -133,17 +129,14 @@ async function connectDB() {
   }
 }
 
-/* =======================================
-   Root Route
-======================================= */
+
+// Root Route
 app.get("/", (req, res) => {
   res.send("🚀 LocalChefBazaar Server Running Successfully!");
 });
 
-/* =======================================
-   Users Routes
-======================================= */
 
+// Users Routes
 app.get("/users", async (req, res) => {
   try {
     await connectDB();
