@@ -32,8 +32,6 @@ if (!admin.apps.length) {
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
-// ... বাকি code আগের মতোই
-
 /* =======================================
    Middleware
 ======================================= */
@@ -55,37 +53,33 @@ app.post(
       return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
-    // Handle the checkout.session.completed event
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
 
       const orderId = session.metadata.orderId;
       const userEmail = session.metadata.userEmail;
-      const amountTotal = session.amount_total / 100; // Convert from cents
+      const amountTotal = session.amount_total / 100;
 
       console.log("✅ Payment successful for order:", orderId);
 
       try {
-        // Update order payment status
+        await connectDB();
+        
         await ordersCollection.updateOne(
           { _id: new ObjectId(orderId) },
           { $set: { paymentStatus: "paid" } }
         );
 
-        // Save payment history
-        await client
-          .db("LocalChefBazaarDB")
-          .collection("payment_history")
-          .insertOne({
-            orderId: orderId,
-            amount: amountTotal,
-            currency: session.currency,
-            paymentMethod: "card",
-            userEmail: userEmail,
-            paymentTime: new Date(),
-            stripeSessionId: session.id,
-            stripePaymentIntentId: session.payment_intent,
-          });
+        await db.collection("payment_history").insertOne({
+          orderId: orderId,
+          amount: amountTotal,
+          currency: session.currency,
+          paymentMethod: "card",
+          userEmail: userEmail,
+          paymentTime: new Date(),
+          stripeSessionId: session.id,
+          stripePaymentIntentId: session.payment_intent,
+        });
 
         console.log("✅ Payment history saved successfully");
       } catch (error) {
@@ -97,15 +91,19 @@ app.post(
   }
 );
 
-// Regular JSON parser for other routes
 app.use(express.json());
 
 /* =======================================
    MongoDB Connection
 ======================================= */
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.f8ar27k.mongodb.net/?retryWrites=true&w=majority`;
-const client = new MongoClient(uri);
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.f8ar27k.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
+const client = new MongoClient(uri, {
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
+});
+
+let db;
 let usersCollection;
 let mealsCollection;
 let reviewsCollection;
@@ -115,23 +113,25 @@ let roleRequestCollection;
 
 async function connectDB() {
   try {
-    await client.connect();
-    console.log("✅ MongoDB Connected Successfully!");
-
-    const db = client.db("LocalChefBazaarDB");
-
-    usersCollection = db.collection("users");
-    mealsCollection = db.collection("meals");
-    reviewsCollection = db.collection("reviews");
-    favoritesCollection = db.collection("favorites");
-    ordersCollection = db.collection("order_collection");
-    roleRequestCollection = db.collection("role_requests");
+    if (!db) {
+      await client.connect();
+      db = client.db("LocalChefBazaarDB");
+      
+      usersCollection = db.collection("users");
+      mealsCollection = db.collection("meals");
+      reviewsCollection = db.collection("reviews");
+      favoritesCollection = db.collection("favorites");
+      ordersCollection = db.collection("order_collection");
+      roleRequestCollection = db.collection("role_requests");
+      
+      console.log("✅ MongoDB Connected Successfully!");
+    }
+    return db;
   } catch (error) {
     console.error("❌ MongoDB Connection Error:", error);
+    throw error;
   }
 }
-
-connectDB();
 
 /* =======================================
    Root Route
@@ -144,9 +144,10 @@ app.get("/", (req, res) => {
    Users Routes
 ======================================= */
 
-// GET all users or single user by email
 app.get("/users", async (req, res) => {
   try {
+    await connectDB();
+    
     const email = req.query.email;
 
     if (email) {
@@ -157,13 +158,14 @@ app.get("/users", async (req, res) => {
     const users = await usersCollection.find().toArray();
     res.send(users);
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// POST create new user
 app.post("/users", async (req, res) => {
   try {
+    await connectDB();
+    
     const user = req.body;
 
     const exists = await usersCollection.findOne({ email: user.email });
@@ -185,23 +187,25 @@ app.post("/users", async (req, res) => {
       message: "User saved successfully",
     });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// GET all users (Admin page)
 app.get("/all-users", async (req, res) => {
   try {
+    await connectDB();
+    
     const users = await usersCollection.find().toArray();
     res.send({ success: true, data: users });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// Make Fraud API
 app.put("/users/fraud/:id", async (req, res) => {
   try {
+    await connectDB();
+    
     const id = req.params.id;
 
     const user = await usersCollection.findOne({ _id: new ObjectId(id) });
@@ -230,7 +234,7 @@ app.put("/users/fraud/:id", async (req, res) => {
       result,
     });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
@@ -238,17 +242,10 @@ app.put("/users/fraud/:id", async (req, res) => {
    Meals Routes
 ======================================= */
 
-// GET meals
 app.get("/meals", async (req, res) => {
   try {
-    // MongoDB connection check
-    if (!mealsCollection) {
-      return res.status(503).send({ 
-        success: false, 
-        message: "Database not connected" 
-      });
-    }
-
+    await connectDB();
+    
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
@@ -273,13 +270,10 @@ app.get("/meals", async (req, res) => {
   }
 });
 
-
-
-
-
-// GET single meal by ID
 app.get("/meals/:id", async (req, res) => {
   try {
+    await connectDB();
+    
     const { id } = req.params;
     const meal = await mealsCollection.findOne({ _id: new ObjectId(id) });
 
@@ -291,16 +285,14 @@ app.get("/meals/:id", async (req, res) => {
 
     res.send({ success: true, data: meal });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-
-
-
-// POST create new meal - এই route এ
 app.post("/create-meal", async (req, res) => {
   try {
+    await connectDB();
+    
     const meal = req.body;
 
     const chef = await usersCollection.findOne({
@@ -325,7 +317,6 @@ app.post("/create-meal", async (req, res) => {
     meal.createdAt = new Date();
     meal.rating = 0;
     
-    // ✅ এই লাইন add করুন
     if (!Array.isArray(meal.ingredients)) {
       meal.ingredients = meal.ingredients 
         ? meal.ingredients.split(',').map(i => i.trim()) 
@@ -340,13 +331,14 @@ app.post("/create-meal", async (req, res) => {
       data: result,
     });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// GET meals created by a specific chef
 app.get("/my-meals", async (req, res) => {
   try {
+    await connectDB();
+    
     const email = req.query.email;
 
     if (!email) {
@@ -362,13 +354,14 @@ app.get("/my-meals", async (req, res) => {
 
     res.send({ success: true, data: meals });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// DELETE Meal by ID
 app.delete("/meals/:id", async (req, res) => {
   try {
+    await connectDB();
+    
     const id = req.params.id;
     const result = await mealsCollection.deleteOne({ _id: new ObjectId(id) });
 
@@ -378,13 +371,14 @@ app.delete("/meals/:id", async (req, res) => {
       result,
     });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// UPDATE Meal by ID
 app.put("/meals/:id", async (req, res) => {
   try {
+    await connectDB();
+    
     const id = req.params.id;
     const updatedData = req.body;
 
@@ -399,7 +393,7 @@ app.put("/meals/:id", async (req, res) => {
       result,
     });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
@@ -407,19 +401,12 @@ app.put("/meals/:id", async (req, res) => {
    Reviews Routes
 ======================================= */
 
-// GET reviews
 app.get("/reviews", async (req, res) => {
   try {
-    // MongoDB connection check
-    if (!reviewsCollection) {
-      return res.status(503).send({ 
-        success: false, 
-        message: "Database not connected" 
-      });
-    }
-
+    await connectDB();
+    
     const reviews = await reviewsCollection.find().toArray();
-    res.send(reviews); // শুধু array পাঠান
+    res.send(reviews);
   } catch (error) {
     console.error("❌ Reviews fetch error:", error.message);
     res.status(500).send({ 
@@ -430,20 +417,22 @@ app.get("/reviews", async (req, res) => {
   }
 });
 
-// GET reviews by mealId
 app.get("/reviews/:mealId", async (req, res) => {
   try {
+    await connectDB();
+    
     const { mealId } = req.params;
     const reviews = await reviewsCollection.find({ foodId: mealId }).toArray();
     res.send(reviews);
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// GET reviews by user email
 app.get("/my-reviews", async (req, res) => {
   try {
+    await connectDB();
+    
     const email = req.query.email;
 
     if (!email) {
@@ -459,13 +448,14 @@ app.get("/my-reviews", async (req, res) => {
 
     res.send({ success: true, data: myReviews });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// POST add review
 app.post("/reviews", async (req, res) => {
   try {
+    await connectDB();
+    
     const review = req.body;
     review.date = new Date();
 
@@ -476,13 +466,14 @@ app.post("/reviews", async (req, res) => {
       message: "Review submitted successfully",
     });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// DELETE Review by ID
 app.delete("/reviews/:id", async (req, res) => {
   try {
+    await connectDB();
+    
     const id = req.params.id;
 
     const result = await reviewsCollection.deleteOne({
@@ -491,13 +482,14 @@ app.delete("/reviews/:id", async (req, res) => {
 
     res.send({ success: true, message: "Review deleted successfully", result });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// UPDATE Review by ID
 app.put("/reviews/:id", async (req, res) => {
   try {
+    await connectDB();
+    
     const id = req.params.id;
     const updatedData = req.body;
 
@@ -508,7 +500,7 @@ app.put("/reviews/:id", async (req, res) => {
 
     res.send({ success: true, message: "Review updated successfully", result });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
@@ -516,9 +508,10 @@ app.put("/reviews/:id", async (req, res) => {
    Favorites Routes
 ======================================= */
 
-// POST add to favorites
 app.post("/favorites", async (req, res) => {
   try {
+    await connectDB();
+    
     const fav = req.body;
 
     const exists = await favoritesCollection.findOne({
@@ -541,13 +534,14 @@ app.post("/favorites", async (req, res) => {
       message: "Added to favorites successfully",
     });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// GET favorites by user email
 app.get("/favorites", async (req, res) => {
   try {
+    await connectDB();
+    
     const email = req.query.email;
 
     if (!email) {
@@ -563,13 +557,14 @@ app.get("/favorites", async (req, res) => {
 
     res.send({ success: true, data: favorites });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// DELETE favorite by ID
 app.delete("/favorites/:id", async (req, res) => {
   try {
+    await connectDB();
+    
     const id = req.params.id;
     const result = await favoritesCollection.deleteOne({
       _id: new ObjectId(id),
@@ -581,7 +576,7 @@ app.delete("/favorites/:id", async (req, res) => {
       result,
     });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
@@ -589,9 +584,10 @@ app.delete("/favorites/:id", async (req, res) => {
    Orders Routes
 ======================================= */
 
-// POST create order
 app.post("/orders", async (req, res) => {
   try {
+    await connectDB();
+    
     const order = req.body;
 
     const user = await usersCollection.findOne({ email: order.userEmail });
@@ -632,13 +628,14 @@ app.post("/orders", async (req, res) => {
       data: result,
     });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// GET: Orders by user email
 app.get("/orders", async (req, res) => {
   try {
+    await connectDB();
+    
     const email = req.query.email;
 
     if (!email) {
@@ -654,13 +651,14 @@ app.get("/orders", async (req, res) => {
 
     res.send({ success: true, data: orders });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// GET orders by chef email
 app.get("/chef-orders", async (req, res) => {
   try {
+    await connectDB();
+    
     const email = req.query.email;
 
     if (!email) {
@@ -707,9 +705,10 @@ app.get("/chef-orders", async (req, res) => {
   }
 });
 
-// UPDATE order status
 app.put("/orders/status/:id", async (req, res) => {
   try {
+    await connectDB();
+    
     const id = req.params.id;
     const { status } = req.body;
 
@@ -738,19 +737,19 @@ app.put("/orders/status/:id", async (req, res) => {
       result,
     });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// UPDATE payment status (payment success page থেকে call হবে)
 app.put("/orders/payment/:id", async (req, res) => {
   try {
+    await connectDB();
+    
     const id = req.params.id;
     const { paymentStatus } = req.body;
 
     console.log(`🔄 Updating payment status for order: ${id}`);
 
-    // Order টি আছে কিনা check করুন
     const order = await ordersCollection.findOne({ _id: new ObjectId(id) });
 
     if (!order) {
@@ -760,7 +759,6 @@ app.put("/orders/payment/:id", async (req, res) => {
       });
     }
 
-    // Payment status update করুন
     const result = await ordersCollection.updateOne(
       { _id: new ObjectId(id) },
       { 
@@ -771,19 +769,15 @@ app.put("/orders/payment/:id", async (req, res) => {
       }
     );
 
-    // Payment history save করুন
-    await client
-      .db("LocalChefBazaarDB")
-      .collection("payment_history")
-      .insertOne({
-        orderId: id,
-        amount: order.price * order.quantity,
-        currency: "bdt",
-        paymentMethod: "card",
-        userEmail: order.userEmail,
-        paymentTime: new Date(),
-        orderStatus: order.orderStatus,
-      });
+    await db.collection("payment_history").insertOne({
+      orderId: id,
+      amount: order.price * order.quantity,
+      currency: "bdt",
+      paymentMethod: "card",
+      userEmail: order.userEmail,
+      paymentTime: new Date(),
+      orderStatus: order.orderStatus,
+    });
 
     console.log(`✅ Payment status updated successfully for order: ${id}`);
 
@@ -805,9 +799,10 @@ app.put("/orders/payment/:id", async (req, res) => {
    Payment Routes (Stripe)
 ======================================= */
 
-// CREATE CHECKOUT SESSION
 app.post("/create-checkout-session", async (req, res) => {
   try {
+    await connectDB();
+    
     const { orderId } = req.body;
 
     if (!orderId) {
@@ -885,9 +880,10 @@ app.post("/create-checkout-session", async (req, res) => {
    Role Request Routes
 ======================================= */
 
-// POST role request
 app.post("/role-request", async (req, res) => {
   try {
+    await connectDB();
+    
     const request = req.body;
 
     if (!request.userName || !request.userEmail || !request.requestType) {
@@ -908,13 +904,14 @@ app.post("/role-request", async (req, res) => {
       data: result,
     });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// GET all role requests
 app.get("/role-requests", async (req, res) => {
   try {
+    await connectDB();
+    
     const requests = await roleRequestCollection
       .find()
       .sort({ requestTime: -1 })
@@ -922,13 +919,14 @@ app.get("/role-requests", async (req, res) => {
 
     res.send({ success: true, data: requests });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// APPROVE role request
 app.put("/role-requests/approve/:id", async (req, res) => {
   try {
+    await connectDB();
+    
     const id = req.params.id;
 
     const request = await roleRequestCollection.findOne({
@@ -966,13 +964,14 @@ app.put("/role-requests/approve/:id", async (req, res) => {
       message: "Request approved successfully",
     });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
-// REJECT role request
 app.put("/role-requests/reject/:id", async (req, res) => {
   try {
+    await connectDB();
+    
     const id = req.params.id;
 
     await roleRequestCollection.updateOne(
@@ -985,7 +984,7 @@ app.put("/role-requests/reject/:id", async (req, res) => {
       message: "Request rejected successfully",
     });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
@@ -995,6 +994,8 @@ app.put("/role-requests/reject/:id", async (req, res) => {
 
 app.get("/admin-stats", async (req, res) => {
   try {
+    await connectDB();
+    
     const totalUsers = await usersCollection.countDocuments();
 
     const pendingOrders = await ordersCollection.countDocuments({
@@ -1005,8 +1006,7 @@ app.get("/admin-stats", async (req, res) => {
       orderStatus: "delivered",
     });
 
-    const payments = await client
-      .db("LocalChefBazaarDB")
+    const payments = await db
       .collection("payment_history")
       .aggregate([
         {
@@ -1030,7 +1030,7 @@ app.get("/admin-stats", async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    res.status(500).send({ success: false, error: error.message });
   }
 });
 
