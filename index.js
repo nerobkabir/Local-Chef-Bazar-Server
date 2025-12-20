@@ -238,14 +238,22 @@ app.put("/users/fraud/:id", async (req, res) => {
    Meals Routes
 ======================================= */
 
+// GET meals
 app.get("/meals", async (req, res) => {
   try {
+    // MongoDB connection check
+    if (!mealsCollection) {
+      return res.status(503).send({ 
+        success: false, 
+        message: "Database not connected" 
+      });
+    }
+
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
     const meals = await mealsCollection.find().skip(skip).limit(limit).toArray();
-
     const totalMeals = await mealsCollection.countDocuments();
 
     res.send({
@@ -256,9 +264,18 @@ app.get("/meals", async (req, res) => {
       totalPages: Math.ceil(totalMeals / limit),
     });
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    console.error("❌ Meals fetch error:", error.message);
+    res.status(500).send({ 
+      success: false, 
+      error: error.message,
+      message: "Failed to fetch meals"
+    });
   }
 });
+
+
+
+
 
 // GET single meal by ID
 app.get("/meals/:id", async (req, res) => {
@@ -390,13 +407,26 @@ app.put("/meals/:id", async (req, res) => {
    Reviews Routes
 ======================================= */
 
-// GET all reviews
+// GET reviews
 app.get("/reviews", async (req, res) => {
   try {
+    // MongoDB connection check
+    if (!reviewsCollection) {
+      return res.status(503).send({ 
+        success: false, 
+        message: "Database not connected" 
+      });
+    }
+
     const reviews = await reviewsCollection.find().toArray();
-    res.send(reviews);
+    res.send(reviews); // শুধু array পাঠান
   } catch (error) {
-    res.status(500).send({ success: false, error });
+    console.error("❌ Reviews fetch error:", error.message);
+    res.status(500).send({ 
+      success: false, 
+      error: error.message,
+      message: "Failed to fetch reviews"
+    });
   }
 });
 
