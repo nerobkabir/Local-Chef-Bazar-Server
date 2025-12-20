@@ -279,34 +279,7 @@ app.get("/meals/:id", async (req, res) => {
 });
 
 
-// ✅ এটা শুধু একবার run করবেন data fix করার জন্য
-app.get("/fix-ingredients", async (req, res) => {
-  try {
-    const meals = await mealsCollection.find({}).toArray();
-    
-    let updated = 0;
-    for (const meal of meals) {
-      if (meal.ingredients && !Array.isArray(meal.ingredients)) {
-        const ingredientsArray = typeof meal.ingredients === 'string' 
-          ? meal.ingredients.split(',').map(i => i.trim())
-          : [];
-          
-        await mealsCollection.updateOne(
-          { _id: meal._id },
-          { $set: { ingredients: ingredientsArray } }
-        );
-        updated++;
-      }
-    }
-    
-    res.send({
-      success: true,
-      message: `${updated} meals updated successfully`
-    });
-  } catch (error) {
-    res.status(500).send({ success: false, error });
-  }
-});
+
 
 // POST create new meal - এই route এ
 app.post("/create-meal", async (req, res) => {
