@@ -9,21 +9,14 @@ const port = process.env.PORT || 3000;
 // Firebase Admin SDK
 var admin = require("firebase-admin");
 
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString(
+  'utf-8'
+)
+const serviceAccount = JSON.parse(decoded)
 if (!admin.apps.length) {
-  try {
-    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
-    
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: privateKey,
-      })
-    });
-    console.log("✅ Firebase Admin SDK initialized successfully");
-  } catch (error) {
-    console.error("❌ Firebase Admin initialization error:", error.message);
-  }
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  })
 }
 
 
@@ -56,7 +49,7 @@ app.post(
       const userEmail = session.metadata.userEmail;
       const amountTotal = session.amount_total / 100;
 
-      console.log("✅ Payment successful for order:", orderId);
+      console.log("Payment successful for order:", orderId);
 
       try {
         await connectDB();
@@ -77,9 +70,9 @@ app.post(
           stripePaymentIntentId: session.payment_intent,
         });
 
-        console.log("✅ Payment history saved successfully");
+        console.log("Payment history saved successfully");
       } catch (error) {
-        console.error("❌ Error updating payment status:", error);
+        console.error("Error updating payment status:", error);
       }
     }
 
@@ -120,11 +113,11 @@ async function connectDB() {
       ordersCollection = db.collection("order_collection");
       roleRequestCollection = db.collection("role_requests");
       
-      console.log("✅ MongoDB Connected Successfully!");
+      console.log("MongoDB Connected Successfully!");
     }
     return db;
   } catch (error) {
-    console.error("❌ MongoDB Connection Error:", error);
+    console.error("MongoDB Connection Error:", error);
     throw error;
   }
 }
