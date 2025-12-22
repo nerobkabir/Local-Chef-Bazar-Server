@@ -38,7 +38,7 @@ app.post(
     try {
       event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
     } catch (err) {
-      console.error("⚠️ Webhook signature verification failed:", err.message);
+      console.error("Webhook signature verification failed:", err.message);
       return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
@@ -125,7 +125,7 @@ async function connectDB() {
 
 // Root Route
 app.get("/", (req, res) => {
-  res.send("🚀 LocalChefBazaar Server Running Successfully!");
+  res.send("LocalChefBazaar Server Running Successfully!");
 });
 
 
@@ -245,7 +245,7 @@ app.get("/meals", async (req, res) => {
       totalPages: Math.ceil(totalMeals / limit),
     });
   } catch (error) {
-    console.error("❌ Meals fetch error:", error.message);
+    console.error("Meals fetch error:", error.message);
     res.status(500).send({ 
       success: false, 
       error: error.message,
@@ -390,7 +390,7 @@ app.get("/reviews", async (req, res) => {
     const reviews = await reviewsCollection.find().toArray();
     res.send(reviews);
   } catch (error) {
-    console.error("❌ Reviews fetch error:", error.message);
+    console.error("Reviews fetch error:", error.message);
     res.status(500).send({ 
       success: false, 
       error: error.message,
@@ -645,11 +645,11 @@ app.get("/chef-orders", async (req, res) => {
       });
     }
 
-    console.log("🔍 Fetching orders for chef email:", email);
+    console.log("Fetching orders for chef email:", email);
 
     const chefMeals = await mealsCollection.find({ userEmail: email }).toArray();
 
-    console.log("✅ Chef Meals Found:", chefMeals.length);
+    console.log("Chef Meals Found:", chefMeals.length);
 
     if (chefMeals.length === 0) {
       return res.send({
@@ -660,21 +660,21 @@ app.get("/chef-orders", async (req, res) => {
     }
 
     const mealIds = chefMeals.map((m) => m._id.toString());
-    console.log("📋 Meal IDs:", mealIds);
+    console.log("Meal IDs:", mealIds);
 
     const orders = await ordersCollection
       .find({ foodId: { $in: mealIds } })
       .sort({ orderTime: -1 })
       .toArray();
 
-    console.log("✅ Orders Found:", orders.length);
+    console.log("Orders Found:", orders.length);
 
     res.send({
       success: true,
       data: orders,
     });
   } catch (error) {
-    console.error("❌ Error fetching chef orders:", error);
+    console.error("Error fetching chef orders:", error);
     res.status(500).send({
       success: false,
       error: error.message,
@@ -725,7 +725,7 @@ app.put("/orders/payment/:id", async (req, res) => {
     const id = req.params.id;
     const { paymentStatus } = req.body;
 
-    console.log(`🔄 Updating payment status for order: ${id}`);
+    console.log(`Updating payment status for order: ${id}`);
 
     const order = await ordersCollection.findOne({ _id: new ObjectId(id) });
 
@@ -756,7 +756,7 @@ app.put("/orders/payment/:id", async (req, res) => {
       orderStatus: order.orderStatus,
     });
 
-    console.log(`✅ Payment status updated successfully for order: ${id}`);
+    console.log(`Payment status updated successfully for order: ${id}`);
 
     res.send({
       success: true,
@@ -764,7 +764,7 @@ app.put("/orders/payment/:id", async (req, res) => {
       result,
     });
   } catch (error) {
-    console.error("❌ Error updating payment status:", error);
+    console.error("Error updating payment status:", error);
     res.status(500).send({ 
       success: false, 
       error: error.message 
@@ -843,7 +843,7 @@ app.post("/create-checkout-session", async (req, res) => {
       url: session.url,
     });
   } catch (error) {
-    console.error("❌ Stripe Error:", error);
+    console.error("Stripe Error:", error);
     res.status(500).send({
       success: false,
       error: error.message,
@@ -1007,5 +1007,5 @@ app.get("/admin-stats", async (req, res) => {
 
 // Start Server
 app.listen(port, () => {
-  console.log(`🚀 Server running on http://localhost:${port}`);
+  console.log(`Server running on http://localhost:${port}`);
 });
