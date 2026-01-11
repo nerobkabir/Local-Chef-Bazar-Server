@@ -129,6 +129,76 @@ app.get("/", (req, res) => {
 });
 
 
+// Add this route to your Express server (index.js)
+
+// Update User Profile Route
+app.put("/users/update/:email", async (req, res) => {
+  try {
+    await connectDB();
+    
+    const email = req.params.email;
+    const { displayName, photoURL, address } = req.body;
+
+    // Validate email
+    if (!email) {
+      return res.status(400).send({
+        success: false,
+        message: "Email is required"
+      });
+    }
+
+    // Check if user exists
+    const user = await usersCollection.findOne({ email });
+    
+    if (!user) {
+      return res.status(404).send({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    // Build update object - only include fields that are provided
+    const updateDoc = {};
+    if (displayName !== undefined) updateDoc.displayName = displayName;
+    if (photoURL !== undefined) updateDoc.photoURL = photoURL;
+    if (address !== undefined) updateDoc.address = address;
+    
+    // Add update timestamp
+    updateDoc.updatedAt = new Date();
+
+    // Update user
+    const result = await usersCollection.updateOne(
+      { email },
+      { $set: updateDoc }
+    );
+
+    if (result.modifiedCount === 0) {
+      return res.send({
+        success: true,
+        message: "No changes were made"
+      });
+    }
+
+    // Get updated user
+    const updatedUser = await usersCollection.findOne({ email });
+
+    res.send({
+      success: true,
+      message: "Profile updated successfully",
+      data: updatedUser
+    });
+  } catch (error) {
+    console.error("Profile update error:", error);
+    res.status(500).send({
+      success: false,
+      error: error.message,
+      message: "Failed to update profile"
+    });
+  }
+});
+
+
+
 // Users Routes
 app.get("/users", async (req, res) => {
   try {
@@ -226,30 +296,268 @@ app.put("/users/fraud/:id", async (req, res) => {
 
 // Meals Routes
 
-app.get("/meals", async (req, res) => {
+// app.get("/meals", async (req, res) => {
+//   try {
+//     await connectDB();
+    
+//     const page = parseInt(req.query.page) || 1;
+//     const limit = parseInt(req.query.limit) || 10;
+//     const skip = (page - 1) * limit;
+
+//     const meals = await mealsCollection.find().skip(skip).limit(limit).toArray();
+//     const totalMeals = await mealsCollection.countDocuments();
+
+//     res.send({
+//       success: true,
+//       data: meals,
+//       totalMeals,
+//       currentPage: page,
+//       totalPages: Math.ceil(totalMeals / limit),
+//     });
+//   } catch (error) {
+//     console.error("Meals fetch error:", error.message);
+//     res.status(500).send({ 
+//       success: false, 
+//       error: error.message,
+//       message: "Failed to fetch meals"
+//     });
+//   }
+// });
+
+// Add these to the existing /meals route handler
+// ===== REPLACE YOUR EXISTING /meals ROUTES WITH THIS CODE =====
+
+// ===== REPLACE YOUR /meals/filters ENDPOINT WITH THIS FIXED VERSION =====
+
+// Get filter options endpoint - FIXED VERSION
+app.get("/meals/filters", async (req, res) => {
   try {
+    // Ensure database is connected
     await connectDB();
     
+    // Check if collection has any documents
+    const count = await mealsCollection.countDocuments();
+    
+    if (count === 0) {
+      // No meals in database, return default values
+      return res.send({
+        success: true,
+        data: {
+          maxPrice: 500,
+          minPrice: 0,
+          maxRating: 5,
+          minRating: 0,
+          categories: [],
+          deliveryAreas: []
+        }
+      });
+    }
+
+    // Aggregate to get min/max values
+    const filters = await mealsCollection.aggregate([
+      {
+        $group: {
+          _id: null,
+          maxPrice: { $max: "$price" },
+          minPrice: { $min: "$price" },
+          maxRating: { $max: "$rating" },
+          minRating: { $min: "$rating" },
+          categories: { $addToSet: "$category" },
+          deliveryAreas: { $addToSet: "$deliveryArea" }
+        }
+      }
+    ]).toArray();
+
+    // Check if aggregation returned results
+    if (!filters || filters.length === 0) {
+      return res.send({
+        success: true,
+        data: {
+          maxPrice: 500,
+          minPrice: 0,
+          maxRating: 5,
+          minRating: 0,
+          categories: [],
+          deliveryAreas: []
+        }
+      });
+    }
+
+    const result = {
+      maxPrice: filters[0].maxPrice || 500,
+      minPrice: filters[0].minPrice || 0,
+      maxRating: filters[0].maxRating || 5,
+      minRating: filters[0].minRating || 0,
+      categories: filters[0].categories || [],
+      deliveryAreas: filters[0].deliveryAreas || []
+    };
+
+    console.log("Filter options retrieved successfully:", result);
+
+    res.send({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error("Filter options error:", error);
+    
+    // Return default values on error instead of 500
+    res.status(200).send({ 
+      success: true, 
+      data: {
+        maxPrice: 500,
+        minPrice: 0,
+        maxRating: 5,
+        minRating: 0,
+        categories: [],
+        deliveryAreas: []
+      },
+      message: "Using default filter values"
+    });
+  }
+});
+
+// ===== ALSO UPDATE YOUR MAIN /meals ENDPOINT WITH THIS VERSION =====
+
+// Main meals endpoint with search, filters, and sorting - IMPROVED VERSION
+app.get("/meals", async (req, res) => {
+  try {
+    // Ensure database is connected
+    await connectDB();
+    
+    // Parse pagination parameters
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    const meals = await mealsCollection.find().skip(skip).limit(limit).toArray();
-    const totalMeals = await mealsCollection.countDocuments();
+    // Parse filter parameters
+    const search = req.query.search?.trim() || "";
+    const minPrice = parseFloat(req.query.minPrice);
+    const maxPrice = parseFloat(req.query.maxPrice);
+    const minRating = parseFloat(req.query.minRating) || 0;
+    const sortBy = req.query.sortBy || "createdAt";
+    const sortOrder = req.query.sortOrder === "asc" ? 1 : -1;
 
+    console.log("=== Meals Query Parameters ===");
+    console.log("Page:", page, "Limit:", limit);
+    console.log("Search:", search);
+    console.log("Price Range:", minPrice, "-", maxPrice);
+    console.log("Min Rating:", minRating);
+    console.log("Sort By:", sortBy, "Order:", sortOrder === 1 ? "asc" : "desc");
+
+    // Build MongoDB query
+    let query = {};
+
+    // 1. SEARCH FUNCTIONALITY
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      
+      query.$or = [
+        { foodName: { $regex: searchRegex } },
+        { description: { $regex: searchRegex } },
+        { chefName: { $regex: searchRegex } },
+        { category: { $regex: searchRegex } },
+        { deliveryArea: { $regex: searchRegex } },
+        // Search in ingredients (works for both array and string)
+        { ingredients: { $regex: searchRegex } }
+      ];
+    }
+
+    // 2. PRICE RANGE FILTER
+    if (!isNaN(minPrice) && !isNaN(maxPrice)) {
+      query.price = {
+        $gte: minPrice,
+        $lte: maxPrice
+      };
+    } else if (!isNaN(minPrice)) {
+      query.price = { $gte: minPrice };
+    } else if (!isNaN(maxPrice)) {
+      query.price = { $lte: maxPrice };
+    }
+
+    // 3. RATING FILTER (only apply if minRating > 0)
+    if (minRating > 0) {
+      query.rating = { $gte: minRating };
+    }
+
+    console.log("MongoDB Query:", JSON.stringify(query, null, 2));
+
+    // 4. SORTING
+    let sort = {};
+    if (sortBy === "price") {
+      sort.price = sortOrder;
+      sort.createdAt = -1; // Secondary sort
+    } else if (sortBy === "rating") {
+      sort.rating = sortOrder;
+      sort.createdAt = -1; // Secondary sort
+    } else if (sortBy === "createdAt") {
+      sort.createdAt = sortOrder;
+    } else {
+      sort.createdAt = -1; // Default sort
+    }
+
+    console.log("Sort Object:", sort);
+
+    // Execute query with pagination
+    const meals = await mealsCollection
+      .find(query)
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .toArray();
+    
+    // Get total count for pagination
+    const totalMeals = await mealsCollection.countDocuments(query);
+    const totalPages = Math.ceil(totalMeals / limit);
+
+    console.log("Results Found:", meals.length, "Total Matching:", totalMeals);
+
+    // Send response
     res.send({
       success: true,
       data: meals,
       totalMeals,
       currentPage: page,
-      totalPages: Math.ceil(totalMeals / limit),
+      totalPages,
+      filters: {
+        search,
+        minPrice,
+        maxPrice,
+        minRating,
+        sortBy,
+        sortOrder: sortOrder === 1 ? "asc" : "desc"
+      }
     });
   } catch (error) {
-    console.error("Meals fetch error:", error.message);
+    console.error("❌ Meals fetch error:", error);
     res.status(500).send({ 
       success: false, 
       error: error.message,
-      message: "Failed to fetch meals"
+      message: "Failed to fetch meals",
+      data: [],
+      totalMeals: 0,
+      totalPages: 0
+    });
+  }
+});
+// ===== TESTING ENDPOINT (Optional - for debugging) =====
+app.get("/meals/test", async (req, res) => {
+  try {
+    await connectDB();
+    
+    const totalCount = await mealsCollection.countDocuments();
+    const sampleMeal = await mealsCollection.findOne();
+    
+    res.send({
+      success: true,
+      totalMeals: totalCount,
+      sampleMeal: sampleMeal,
+      message: "Database connection working"
+    });
+  } catch (error) {
+    res.status(500).send({ 
+      success: false, 
+      error: error.message 
     });
   }
 });
