@@ -324,22 +324,16 @@ app.put("/users/fraud/:id", async (req, res) => {
 //   }
 // });
 
-// Add these to the existing /meals route handler
-// ===== REPLACE YOUR EXISTING /meals ROUTES WITH THIS CODE =====
 
-// ===== REPLACE YOUR /meals/filters ENDPOINT WITH THIS FIXED VERSION =====
 
-// Get filter options endpoint - FIXED VERSION
+// Get filter options endpoint 
 app.get("/meals/filters", async (req, res) => {
   try {
-    // Ensure database is connected
     await connectDB();
     
-    // Check if collection has any documents
     const count = await mealsCollection.countDocuments();
     
     if (count === 0) {
-      // No meals in database, return default values
       return res.send({
         success: true,
         data: {
@@ -353,7 +347,6 @@ app.get("/meals/filters", async (req, res) => {
       });
     }
 
-    // Aggregate to get min/max values
     const filters = await mealsCollection.aggregate([
       {
         $group: {
@@ -368,7 +361,6 @@ app.get("/meals/filters", async (req, res) => {
       }
     ]).toArray();
 
-    // Check if aggregation returned results
     if (!filters || filters.length === 0) {
       return res.send({
         success: true,
@@ -401,7 +393,6 @@ app.get("/meals/filters", async (req, res) => {
   } catch (error) {
     console.error("Filter options error:", error);
     
-    // Return default values on error instead of 500
     res.status(200).send({ 
       success: true, 
       data: {
@@ -417,20 +408,16 @@ app.get("/meals/filters", async (req, res) => {
   }
 });
 
-// ===== ALSO UPDATE YOUR MAIN /meals ENDPOINT WITH THIS VERSION =====
 
-// Main meals endpoint with search, filters, and sorting - IMPROVED VERSION
 app.get("/meals", async (req, res) => {
   try {
-    // Ensure database is connected
+    
     await connectDB();
     
-    // Parse pagination parameters
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    // Parse filter parameters
     const search = req.query.search?.trim() || "";
     const minPrice = parseFloat(req.query.minPrice);
     const maxPrice = parseFloat(req.query.maxPrice);
@@ -445,10 +432,8 @@ app.get("/meals", async (req, res) => {
     console.log("Min Rating:", minRating);
     console.log("Sort By:", sortBy, "Order:", sortOrder === 1 ? "asc" : "desc");
 
-    // Build MongoDB query
     let query = {};
 
-    // 1. SEARCH FUNCTIONALITY
     if (search) {
       const searchRegex = new RegExp(search, 'i');
       
@@ -458,12 +443,10 @@ app.get("/meals", async (req, res) => {
         { chefName: { $regex: searchRegex } },
         { category: { $regex: searchRegex } },
         { deliveryArea: { $regex: searchRegex } },
-        // Search in ingredients (works for both array and string)
         { ingredients: { $regex: searchRegex } }
       ];
     }
 
-    // 2. PRICE RANGE FILTER
     if (!isNaN(minPrice) && !isNaN(maxPrice)) {
       query.price = {
         $gte: minPrice,
@@ -475,30 +458,27 @@ app.get("/meals", async (req, res) => {
       query.price = { $lte: maxPrice };
     }
 
-    // 3. RATING FILTER (only apply if minRating > 0)
     if (minRating > 0) {
       query.rating = { $gte: minRating };
     }
 
     console.log("MongoDB Query:", JSON.stringify(query, null, 2));
 
-    // 4. SORTING
     let sort = {};
     if (sortBy === "price") {
       sort.price = sortOrder;
-      sort.createdAt = -1; // Secondary sort
+      sort.createdAt = -1; 
     } else if (sortBy === "rating") {
       sort.rating = sortOrder;
-      sort.createdAt = -1; // Secondary sort
+      sort.createdAt = -1; 
     } else if (sortBy === "createdAt") {
       sort.createdAt = sortOrder;
     } else {
-      sort.createdAt = -1; // Default sort
+      sort.createdAt = -1; 
     }
 
     console.log("Sort Object:", sort);
 
-    // Execute query with pagination
     const meals = await mealsCollection
       .find(query)
       .sort(sort)
@@ -506,13 +486,11 @@ app.get("/meals", async (req, res) => {
       .limit(limit)
       .toArray();
     
-    // Get total count for pagination
     const totalMeals = await mealsCollection.countDocuments(query);
     const totalPages = Math.ceil(totalMeals / limit);
 
     console.log("Results Found:", meals.length, "Total Matching:", totalMeals);
 
-    // Send response
     res.send({
       success: true,
       data: meals,
@@ -540,7 +518,7 @@ app.get("/meals", async (req, res) => {
     });
   }
 });
-// ===== TESTING ENDPOINT (Optional - for debugging) =====
+
 app.get("/meals/test", async (req, res) => {
   try {
     await connectDB();
