@@ -1182,50 +1182,7 @@ app.get("/role-requests", async (req, res) => {
   }
 });
 
-app.put("/role-requests/approve/:id", async (req, res) => {
-  try {
-    await connectDB();
-    
-    const id = req.params.id;
 
-    const request = await roleRequestCollection.findOne({
-      _id: new ObjectId(id),
-    });
-
-    if (!request) {
-      return res
-        .status(404)
-        .send({ success: false, message: "Request not found" });
-    }
-
-    let updateUserDoc = {};
-    if (request.requestType === "chef") {
-      const chefId = "chef-" + Math.floor(1000 + Math.random() * 9000);
-      updateUserDoc = { role: "chef", chefId };
-    }
-
-    if (request.requestType === "admin") {
-      updateUserDoc = { role: "admin" };
-    }
-
-    await usersCollection.updateOne(
-      { email: request.userEmail },
-      { $set: updateUserDoc }
-    );
-
-    await roleRequestCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { requestStatus: "approved" } }
-    );
-
-    res.send({
-      success: true,
-      message: "Request approved successfully",
-    });
-  } catch (error) {
-    res.status(500).send({ success: false, error: error.message });
-  }
-});
 
 app.put("/role-requests/reject/:id", async (req, res) => {
   try {
@@ -1247,13 +1204,253 @@ app.put("/role-requests/reject/:id", async (req, res) => {
   }
 });
 
-// Admin Stats Route
+// Add this route after the existing role request routes
+
+// Rider-specific routes
+
+// Get all riders
+app.get("/riders", async (req, res) => {
+  try {
+    await connectDB();
+    
+    const riders = await usersCollection
+      .find({ role: "rider" })
+      .toArray();
+
+    res.send({ success: true, data: riders });
+  } catch (error) {
+    res.status(500).send({ success: false, error: error.message });
+  }
+});
+
+// Get available delivery requests for riders
+app.get("/delivery-requests", async (req, res) => {
+  try {
+    await connectDB();
+    
+    const deliveryRequests = await ordersCollection
+      .find({ 
+        orderStatus: "accepted",
+        deliveryStatus: { $in: ["pending", null] }
+      })
+      .sort({ orderTime: -1 })
+      .toArray();
+
+    res.send({ success: true, data: deliveryRequests });
+  } catch (error) {
+    res.status(500).send({ success: false, error: error.message });
+  }
+});
+
+// Get rider's assigned deliveries
+app.get("/my-deliveries", async (req, res) => {
+  try {
+    await connectDB();
+    
+    const email = req.query.email;
+
+    if (!email) {
+      return res.status(400).send({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    const rider = await usersCollection.findOne({ email });
+    
+    if (!rider || rider.role !== "rider") {
+      return res.status(403).send({
+        success: false,
+        message: "Only riders can access deliveries",
+      });
+    }
+
+    const deliveries = await ordersCollection
+      .find({ 
+        riderId: rider.riderId,
+      })
+      .sort({ orderTime: -1 })
+      .toArray();
+
+    res.send({ success: true, data: deliveries });
+  } catch (error) {
+    res.status(500).send({ success: false, error: error.message });
+  }
+});
+
+// Accept delivery request
+app.put("/accept-delivery/:orderId", async (req, res) => {
+  try {
+    await connectDB();
+    
+    const { orderId } = req.params;
+    const { riderEmail } = req.body;
+
+    const rider = await usersCollection.findOne({ email: riderEmail });
+
+    if (!rider || rider.role !== "rider") {
+      return res.status(403).send({
+        success: false,
+        message: "Only riders can accept deliveries",
+      });
+    }
+
+    const order = await ordersCollection.findOne({ _id: new ObjectId(orderId) });
+
+    if (!order) {
+      return res.status(404).send({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    if (order.deliveryStatus && order.deliveryStatus !== "pending") {
+      return res.status(400).send({
+        success: false,
+        message: "This delivery has already been assigned",
+      });
+    }
+
+    const result = await ordersCollection.updateOne(
+      { _id: new ObjectId(orderId) },
+      { 
+        $set: { 
+          riderId: rider.riderId,
+          riderName: rider.displayName,
+          riderEmail: rider.email,
+          deliveryStatus: "picked_up",
+          pickupTime: new Date()
+        } 
+      }
+    );
+
+    res.send({
+      success: true,
+      message: "Delivery accepted successfully",
+      result,
+    });
+  } catch (error) {
+    res.status(500).send({ success: false, error: error.message });
+  }
+});
+
+// Update delivery status
+app.put("/update-delivery-status/:orderId", async (req, res) => {
+  try {
+    await connectDB();
+    
+    const { orderId } = req.params;
+    const { deliveryStatus, riderEmail } = req.body;
+
+    const order = await ordersCollection.findOne({ _id: new ObjectId(orderId) });
+
+    if (!order) {
+      return res.status(404).send({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    if (order.riderEmail !== riderEmail) {
+      return res.status(403).send({
+        success: false,
+        message: "You are not assigned to this delivery",
+      });
+    }
+
+    const updateDoc = {
+      $set: { deliveryStatus }
+    };
+
+    if (deliveryStatus === "delivered") {
+      updateDoc.$set.orderStatus = "delivered";
+      updateDoc.$set.deliveryTime = new Date();
+    }
+
+    const result = await ordersCollection.updateOne(
+      { _id: new ObjectId(orderId) },
+      updateDoc
+    );
+
+    res.send({
+      success: true,
+      message: "Delivery status updated successfully",
+      result,
+    });
+  } catch (error) {
+    res.status(500).send({ success: false, error: error.message });
+  }
+});
+
+// IMPORTANT: Update the role-requests approve endpoint to handle rider role
+// Replace the existing /role-requests/approve/:id endpoint with this:
+
+app.put("/role-requests/approve/:id", async (req, res) => {
+  try {
+    await connectDB();
+    
+    const id = req.params.id;
+
+    const request = await roleRequestCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!request) {
+      return res
+        .status(404)
+        .send({ success: false, message: "Request not found" });
+    }
+
+    let updateUserDoc = {};
+    
+    // ✅ FIXED: else if ব্যবহার করুন
+    if (request.requestType === "chef") {
+      const chefId = "chef-" + Math.floor(1000 + Math.random() * 9000);
+      updateUserDoc = { role: "chef", chefId };
+    } else if (request.requestType === "admin") {
+      updateUserDoc = { role: "admin" };
+    } else if (request.requestType === "rider") {
+      const riderId = "rider-" + Math.floor(1000 + Math.random() * 9000);
+      updateUserDoc = { role: "rider", riderId };
+    }
+
+    // Debug logs
+    console.log("Approving request for:", request.userEmail);
+    console.log("Request type:", request.requestType);
+    console.log("Update document:", updateUserDoc);
+
+    const updateResult = await usersCollection.updateOne(
+      { email: request.userEmail },
+      { $set: updateUserDoc }
+    );
+
+    console.log("Update result:", updateResult);
+
+    await roleRequestCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { requestStatus: "approved" } }
+    );
+
+    res.send({
+      success: true,
+      message: "Request approved successfully",
+    });
+  } catch (error) {
+    console.error("Error approving request:", error);
+    res.status(500).send({ success: false, error: error.message });
+  }
+});
+
+// Update admin stats to include rider count
+// Replace the existing /admin-stats endpoint with this:
 
 app.get("/admin-stats", async (req, res) => {
   try {
     await connectDB();
     
     const totalUsers = await usersCollection.countDocuments();
+    const totalRiders = await usersCollection.countDocuments({ role: "rider" });
+    const totalChefs = await usersCollection.countDocuments({ role: "rider" });
 
     const pendingOrders = await ordersCollection.countDocuments({
       orderStatus: "pending",
@@ -1261,6 +1458,10 @@ app.get("/admin-stats", async (req, res) => {
 
     const deliveredOrders = await ordersCollection.countDocuments({
       orderStatus: "delivered",
+    });
+
+    const activeDeliveries = await ordersCollection.countDocuments({
+      deliveryStatus: "picked_up",
     });
 
     const payments = await db
@@ -1281,8 +1482,11 @@ app.get("/admin-stats", async (req, res) => {
       success: true,
       data: {
         totalUsers,
+        totalRiders,
+        totalChefs,
         pendingOrders,
         deliveredOrders,
+        activeDeliveries,
         totalPaymentAmount,
       },
     });
